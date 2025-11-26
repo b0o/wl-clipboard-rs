@@ -156,3 +156,102 @@ impl std::fmt::Display for SourceError {
 }
 
 impl std::error::Error for SourceError {}
+
+/// Resolve all source specifications into MimeSource entries.
+///
+/// Source resolution order:
+/// 1. Process --file sources
+/// 2. Process --stdin source (if specified)
+/// 3. Process --literal sources
+/// 4. Process default input (positional args or implicit stdin)
+///
+/// Note: Same MIME type from multiple sources = last wins (handled by library).
+pub fn resolve_sources(options: &Options) -> Result<Vec<MimeSource>, SourceError> {
+    let mut sources = Vec::new();
+
+    // Process --file sources (pairs of [MIME, PATH])
+    for chunk in options.file_sources.chunks(2) {
+        if chunk.len() == 2 {
+            let mime = parse_mime_type(&chunk[0]);
+            let path = &chunk[1];
+
+            if !Path::new(path).exists() {
+                return Err(SourceError::FileNotFound(path.clone()));
+            }
+
+            let data = fs::read(path)
+                .map_err(|e| SourceError::FileReadError(path.clone(), e))?;
+
+            sources.push(MimeSource {
+                source: Source::Bytes(data.into()),
+                mime_type: mime,
+            });
+        }
+    }
+
+    // Process --stdin source
+    if let Some(ref mime_str) = options.stdin_source {
+        // Check if stdin is connected (not a TTY)
+        if io::stdin().is_terminal() {
+            return Err(SourceError::NoStdinConnected);
+        }
+
+        sources.push(MimeSource {
+            source: Source::StdIn,
+            mime_type: parse_mime_type(mime_str),
+        });
+    }
+
+    // Process --literal sources (pairs of [MIME, DATA])
+    for chunk in options.literal_sources.chunks(2) {
+        if chunk.len() == 2 {
+            let mime = parse_mime_type(&chunk[0]);
+            let data = chunk[1].clone().into_bytes();
+
+            sources.push(MimeSource {
+                source: Source::Bytes(data.into()),
+                mime_type: mime,
+            });
+        }
+    }
+
+    // Process default input (positional args or implicit stdin)
+    // Only if no explicit --stdin was given
+    if !options.text.is_empty() {
+        // Positional args present - join them with spaces
+        let mut iter = options.text.iter();
+        let mut data = iter.next().unwrap().clone();
+        for arg in iter {
+            data.push(" ");
+            data.push(arg);
+        }
+
+        let mime = options
+            .mime_type
+            .as_ref()
+            .map(|m| parse_mime_type(m))
+            .unwrap_or(MimeType::Autodetect);
+
+        sources.push(MimeSource {
+            source: Source::Bytes(data.into_encoded_bytes().into()),
+            mime_type: mime,
+        });
+    } else if options.stdin_source.is_none() {
+        // No positional args and no explicit --stdin - use implicit stdin
+        // Only if stdin is actually connected
+        if !io::stdin().is_terminal() {
+            let mime = options
+                .mime_type
+                .as_ref()
+                .map(|m| parse_mime_type(m))
+                .unwrap_or(MimeType::Autodetect);
+
+            sources.push(MimeSource {
+                source: Source::StdIn,
+                mime_type: mime,
+            });
+        }
+    }
+
+    Ok(sources)
+}
