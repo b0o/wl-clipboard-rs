@@ -1,13 +1,12 @@
 use std::fs::OpenOptions;
-use std::os::unix::ffi::OsStringExt;
 
 use clap::Parser;
 use libc::fork;
 use rustix::stdio::{dup2_stdin, dup2_stdout};
-use wl_clipboard_rs::copy::{self, clear, ClipboardType, MimeType, Seat, ServeRequests, Source};
-use wl_clipboard_rs_tools::wl_copy::Options;
+use wl_clipboard_rs::copy::{self, clear, ClipboardType, Seat, ServeRequests};
+use wl_clipboard_rs_tools::wl_copy::{resolve_sources, Options};
 
-fn from_options(x: Options) -> wl_clipboard_rs::copy::Options {
+fn from_options(x: &Options) -> copy::Options {
     let mut opts = copy::Options::new();
     opts.serve_requests(if x.paste_once {
         ServeRequests::Only(1)
@@ -25,13 +24,14 @@ fn from_options(x: Options) -> wl_clipboard_rs::copy::Options {
         ClipboardType::Regular
     })
     .trim_newline(x.trim_newline)
-    .seat(x.seat.map(Seat::Specific).unwrap_or_default());
+    .seat(x.seat.clone().map(Seat::Specific).unwrap_or_default())
+    .omit_additional_text_mime_types(x.no_text_fallback);
     opts
 }
 
 fn main() -> Result<(), anyhow::Error> {
     // Parse command-line options.
-    let mut options = Options::parse();
+    let options = Options::parse();
 
     stderrlog::new()
         .verbosity(usize::from(options.verbose) + 1)
@@ -46,41 +46,20 @@ fn main() -> Result<(), anyhow::Error> {
         };
         clear(
             clipboard,
-            options.seat.map(Seat::Specific).unwrap_or_default(),
+            options.seat.clone().map(Seat::Specific).unwrap_or_default(),
         )?;
         return Ok(());
     }
 
-    // Is there a way to do this without checking twice?
-    let source_data = if options.text.is_empty() {
-        None
-    } else {
-        // Copy the arguments into the target file.
-        let mut iter = options.text.drain(..);
-        let mut data = iter.next().unwrap();
+    // Resolve all sources
+    let sources = resolve_sources(&options).map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        for arg in iter {
-            data.push(" ");
-            data.push(arg);
-        }
-
-        Some(data)
-    };
-
-    let source = if let Some(source_data) = source_data {
-        Source::Bytes(source_data.into_vec().into())
-    } else {
-        Source::StdIn
-    };
-
-    let mime_type = if let Some(mime_type) = options.mime_type.take() {
-        MimeType::Specific(mime_type)
-    } else {
-        MimeType::Autodetect
-    };
+    if sources.is_empty() {
+        anyhow::bail!("no data to copy (specify text, use stdin, or use --file/--literal/--stdin)");
+    }
 
     let foreground = options.foreground;
-    let prepared_copy = from_options(options).prepare_copy(source, mime_type)?;
+    let prepared_copy = from_options(&options).prepare_copy_multi(sources)?;
 
     if foreground {
         prepared_copy.serve()?;
