@@ -61,6 +61,48 @@ pub struct Options {
     )]
     pub mime_type: Option<String>,
 
+    /// Add a file as a MIME source
+    ///
+    /// Takes two arguments: MIME type (or "auto" for auto-detection) and file path.
+    /// Can be specified multiple times.
+    #[arg(
+        short = 'F',
+        long = "file",
+        num_args = 2,
+        value_names = ["MIME", "PATH"],
+        conflicts_with = "clear",
+        action = clap::ArgAction::Append
+    )]
+    pub file_sources: Vec<String>,
+
+    /// Add stdin as a MIME source
+    ///
+    /// Takes one argument: MIME type (or "auto" for auto-detection).
+    /// Can only be used once.
+    #[arg(long = "stdin", value_name = "MIME", conflicts_with = "clear")]
+    pub stdin_source: Option<String>,
+
+    /// Add a literal string as a MIME source
+    ///
+    /// Takes two arguments: MIME type and literal string data.
+    /// Can be specified multiple times.
+    #[arg(
+        short = 'L',
+        long = "literal",
+        num_args = 2,
+        value_names = ["MIME", "DATA"],
+        conflicts_with = "clear",
+        action = clap::ArgAction::Append
+    )]
+    pub literal_sources: Vec<String>,
+
+    /// Disable automatic text MIME type fallbacks
+    ///
+    /// By default, when copying text, additional MIME types like text/plain, UTF8_STRING,
+    /// STRING, and TEXT are automatically offered. This flag disables that behavior.
+    #[arg(long = "no-text-fallback", conflicts_with = "clear")]
+    pub no_text_fallback: bool,
+
     /// Text to copy
     ///
     /// If not specified, wl-copy will use data from the standard input.
