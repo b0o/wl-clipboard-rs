@@ -1,6 +1,10 @@
 use std::ffi::OsString;
+use std::fs;
+use std::io::{self, IsTerminal, Read};
+use std::path::Path;
 
 use clap::Parser;
+use wl_clipboard_rs::copy::{MimeSource, MimeType, Source};
 
 #[derive(Parser)]
 #[command(
@@ -113,3 +117,42 @@ pub struct Options {
     #[arg(long, short, action = clap::ArgAction::Count)]
     pub verbose: u8,
 }
+
+/// Parse a MIME type string, treating "auto" as auto-detection.
+fn parse_mime_type(mime: &str) -> MimeType {
+    if mime.eq_ignore_ascii_case("auto") {
+        MimeType::Autodetect
+    } else {
+        MimeType::Specific(mime.to_string())
+    }
+}
+
+/// Errors that can occur during source resolution.
+#[derive(Debug)]
+pub enum SourceError {
+    /// File does not exist
+    FileNotFound(String),
+    /// Failed to read file
+    FileReadError(String, io::Error),
+    /// --stdin used with no stdin connected
+    NoStdinConnected,
+    /// Multiple conflicting source specifications
+    ConflictingSourceType(String),
+}
+
+impl std::fmt::Display for SourceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SourceError::FileNotFound(path) => write!(f, "file not found: {}", path),
+            SourceError::FileReadError(path, err) => {
+                write!(f, "failed to read file '{}': {}", path, err)
+            }
+            SourceError::NoStdinConnected => {
+                write!(f, "--stdin requires stdin to be connected (not a TTY)")
+            }
+            SourceError::ConflictingSourceType(msg) => write!(f, "{}", msg),
+        }
+    }
+}
+
+impl std::error::Error for SourceError {}
